@@ -388,8 +388,13 @@ class Transformer(nn.Module):
         self.embeddings = Embeddings(config, img_size=img_size)
         self.encoder = Encoder(config, vis)
 
+        if config.get('pre_norm', False):
+            self.norm_pre = LayerNorm(config.hidden_size, eps=1e-6)
+        else:
+            self.norm_pre = nn.Identity()
+
     def forward(self, input_ids):
-        embedding_output = self.embeddings(input_ids)
+        embedding_output = self.norm_pre(self.embeddings(input_ids))
         encoded = self.encoder(embedding_output)
         return encoded 
 

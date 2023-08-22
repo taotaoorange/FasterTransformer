@@ -106,6 +106,43 @@ def export_onnx(args, model):
             input_names = ['input'], output_names = ['output'], dynamic_axes={'input' : {0 : 'batch_size'},'output' : {0 : 'batch_size'}})
 
 
+def load_timm_weights(model, input_dict):
+    out_dict = {}
+    swaps = [
+        ('cls_token', 'transformer.embeddings.cls_token'), ('pos_embed', 'transformer.embeddings.position_embeddings'),
+        ('patch_embed.proj.weight', 'transformer.embeddings.patch_embeddings.weight'), ('blocks', 'transformer.encoder.layer'),
+        ('norm1', 'attention_norm'), ('norm2', 'ffn_norm'), ('mlp', 'ffn'), ('attn.proj', 'attn.out'),
+        ('norm_pre', 'transformer.norm_pre')
+    ]
+    for k, v in input_dict.items():
+        for sp in swaps:
+            k = k.replace(sp[0], sp[1])
+
+        if k == 'norm.weight':
+            k = 'transformer.encoder.encoder_norm.weight'
+        if k == 'norm.bias':
+            k = 'transformer.encoder.encoder_norm.bias'
+
+        if k == 'transformer.embeddings.patch_embeddings.weight':
+            out_dict['transformer.embeddings.patch_embeddings.bias'] = torch.zeros(v.shape[0])
+
+        if 'attn.qkv.weight' in k:
+            d = v.shape[0] // 3
+            out_dict[k.replace('qkv', 'query')] = v[:d,:].clone()
+            out_dict[k.replace('qkv', 'key')] = v[d:2*d,:].clone()
+            out_dict[k.replace('qkv', 'value')] = v[2*d:,:].clone()
+            continue
+        if 'attn.qkv.bias' in k:
+            d = v.shape[0] // 3
+            out_dict[k.replace('qkv', 'query')] = v[:d].clone()
+            out_dict[k.replace('qkv', 'key')] = v[d:2*d].clone()
+            out_dict[k.replace('qkv', 'value')] = v[2*d:].clone()
+            continue
+        out_dict[k] = v
+    #import pdb; pdb.set_trace()
+    model.load_state_dict(out_dict, strict=True)
+
+
 def setup(args):
     # Prepare model
     config = CONFIGS[args.model_type]
@@ -113,14 +150,20 @@ def setup(args):
     num_classes = 10 if args.dataset == "cifar10" else 1000
 
     model = VisionTransformerINT8(config, args.img_size, zero_head=False, num_classes=num_classes)
-    model.load_from(np.load(args.pretrained_dir))
+    if 'timm' in args.model_type:
+        load_timm_weights(model, torch.load(args.pretrained_dir)['state_dict'])
+    else:
+        model.load_from(np.load(args.pretrained_dir))
     model.to(args.device)
     num_params = count_parameters(model)
 
     # Load the original model
     model_orig = None
     model_orig = VisionTransformer(config, args.img_size, zero_head=False, num_classes=num_classes)
-    model_orig.load_from(np.load(args.pretrained_dir))
+    if 'timm' in args.model_type:
+        load_timm_weights(model_orig, torch.load(args.pretrained_dir)['state_dict'])
+    else:
+        model_orig.load_from(np.load(args.pretrained_dir))
     model_orig.to(args.device)
     num_params_orig = count_parameters(model_orig)
     assert num_params_orig == num_params
@@ -395,7 +438,7 @@ def parse_option():
                         help="Name of this run. Used for monitoring.")
     parser.add_argument("--dataset", choices=["cifar10", "cifar100"], default="cifar100",
                         help="Which downstream task.")
-    parser.add_argument("--model_type", choices=["ViT-B_16", "ViT-B_32", "ViT-L_16",
+    parser.add_argument("--model_type", choices=["ViT-B_16", "ViT-B_16_timm", "ViT-B_32", "ViT-L_16",
                                                  "ViT-L_32", "ViT-H_14", "R50-ViT-B_16"],
                         default="ViT-B_16",
                         help="Which variant to use.")
