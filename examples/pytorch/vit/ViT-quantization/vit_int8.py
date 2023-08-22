@@ -205,7 +205,7 @@ class Attention(nn.Module):
 
         attention_output = self.out(context_layer)
         attention_output = self.proj_dropout(attention_output)
-        return attention_output, weights
+        return attention_output
 
 
 class Mlp(nn.Module):
@@ -304,7 +304,7 @@ class Block(nn.Module):
             x = self.attention_norm(self.layernorm_input1_quantizer(x))
         else:
             x = self.attention_norm(x)
-        x, weights = self.attn(x)
+        x = self.attn(x)
 
         if QUANT:
             x = self.add1_local_input_quantizer(x) + self.add1_residual_input_quantizer(h)
@@ -324,7 +324,7 @@ class Block(nn.Module):
             x = x + h
         # print('residual:', h[0,0,:8])
         # print('adding bias+res', x[0,0,:8])
-        return x, weights
+        return x
 
     def load_from(self, weights, n_block):
         ROOT = f"Transformer/encoderblock_{n_block}"
@@ -377,11 +377,9 @@ class Encoder(nn.Module):
     def forward(self, hidden_states):
         attn_weights = []
         for idx, layer_block in enumerate(self.layer):
-            hidden_states, weights = layer_block(hidden_states)
-            if self.vis:
-                attn_weights.append(weights)
+            hidden_states = layer_block(hidden_states)
         encoded = self.encoder_norm(hidden_states)
-        return encoded, attn_weights
+        return encoded
 
 
 class Transformer(nn.Module):
@@ -392,8 +390,8 @@ class Transformer(nn.Module):
 
     def forward(self, input_ids):
         embedding_output = self.embeddings(input_ids)
-        encoded, attn_weights = self.encoder(embedding_output)
-        return encoded, attn_weights
+        encoded = self.encoder(embedding_output)
+        return encoded 
 
 
 class VisionTransformerINT8(nn.Module):
@@ -407,7 +405,7 @@ class VisionTransformerINT8(nn.Module):
         self.head = Linear(config.hidden_size, num_classes)
 
     def forward(self, x, labels=None):
-        x, attn_weights = self.transformer(x)
+        x = self.transformer(x)
         logits = self.head(x[:, 0])
 
         if labels is not None:
@@ -415,7 +413,7 @@ class VisionTransformerINT8(nn.Module):
             loss = loss_fct(logits.view(-1, self.num_classes), labels.view(-1))
             return logits, loss
         else:
-            return logits, attn_weights
+            return logits
 
     def load_from(self, weights):
         with torch.no_grad():

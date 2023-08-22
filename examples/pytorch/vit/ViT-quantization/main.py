@@ -24,14 +24,16 @@ from datetime import timedelta
 
 import torch
 import torch.distributed as dist
+import torch.onnx
+print(torch.__version__)
 
 from tqdm import tqdm
-from apex import amp
-from apex.parallel import DistributedDataParallel as DDP
+#from apex import amp
+#from apex.parallel import DistributedDataParallel as DDP
 
 import sys 
 sys.path.insert(0, "./ViT-pytorch")
-from models.modeling import CONFIGS
+from models.modeling import CONFIGS, VisionTransformer
 from utils.scheduler import WarmupLinearSchedule, WarmupCosineSchedule
 from utils.dist_util import get_world_size
 
@@ -93,6 +95,17 @@ def save_model(args, model):
     logger.info("Saved model checkpoint to %s", model_checkpoint)
 
 
+def export_onnx(args, model):
+    print(torch.__version__)
+    model.eval()
+    x = torch.randn(8, 3, args.img_size, args.img_size, requires_grad=False, device=next(model.parameters()).device)
+    out = model(x)
+    save_path = os.path.join(args.output_dir, "%s.onnx" % args.name)
+    print(save_path)
+    torch.onnx.export(model, x, save_path, export_params=True, opset_version=18, do_constant_folding=True, #verbose=True,
+            input_names = ['input'], output_names = ['output'], dynamic_axes={'input' : {0 : 'batch_size'},'output' : {0 : 'batch_size'}})
+
+
 def setup(args):
     # Prepare model
     config = CONFIGS[args.model_type]
@@ -104,11 +117,19 @@ def setup(args):
     model.to(args.device)
     num_params = count_parameters(model)
 
+    # Load the original model
+    model_orig = None
+    model_orig = VisionTransformer(config, args.img_size, zero_head=False, num_classes=num_classes)
+    model_orig.load_from(np.load(args.pretrained_dir))
+    model_orig.to(args.device)
+    num_params_orig = count_parameters(model_orig)
+    assert num_params_orig == num_params
+
     logger.info("{}".format(config))
     logger.info("Training parameters %s", args)
     logger.info("Total Parameter: \t%2.1fM" % num_params)
     print(num_params)
-    return args, model
+    return args, model, model_orig
 
 
 def count_parameters(model):
@@ -142,7 +163,7 @@ def valid(args, config, model, test_loader):
         batch = tuple(t.to(args.device) for t in batch)
         x, y = batch
 
-        logits, _ = model(x)
+        logits = model(x)
 
         eval_loss = loss_fct(logits, y)
         acc1, acc5 = accuracy(logits, y, topk=(1, 5))
@@ -162,12 +183,19 @@ def valid(args, config, model, test_loader):
 
     return acc1_meter.avg
 
-def calib(args, config, model):
+def calib(args, config, model, model_orig=None):
     """ Calibrate the model """
     if args.local_rank in [-1, 0]:
         os.makedirs(args.output_dir, exist_ok=True)
     
     dataset_train, dataset_val, train_loader, test_loader = build_loader(config, args)
+    
+    if model_orig:
+        print(len(dataset_val))
+        accuracy = valid(args, config, model_orig, test_loader)
+        print("Test accuracy (original model): ", accuracy)
+        import pdb; pdb.set_trace()
+
     # Calibration
     quant_utils.configure_model(model, args, calib=True)
     model.eval()
@@ -192,6 +220,11 @@ def calib(args, config, model):
         os.mkdir(args.calib_output_path)
     torch.save(model.state_dict(), output_model_path)
     logger.info(f'Model is saved to {output_model_path}')
+
+    from pytorch_quantization import nn as quant_nn
+    quant_nn.TensorQuantizer.use_fb_fake_quant = True
+    export_onnx(args, model)
+
 
 def train(args, config):
     num_classes = 1000
@@ -432,9 +465,10 @@ def main():
     else:  # Initializes the distributed backend which will take care of sychronizing nodes/GPUs
         torch.cuda.set_device(args.local_rank)
         device = torch.device("cuda", args.local_rank)
-        torch.distributed.init_process_group(backend='nccl',
-                                             timeout=timedelta(minutes=60))
         args.n_gpu = 1
+    torch.distributed.init_process_group(backend='nccl', timeout=timedelta(minutes=60))
+    print(torch.distributed.get_world_size())
+    print(torch.distributed.get_rank())
     args.device = device
 
     # Setup logging
@@ -449,7 +483,7 @@ def main():
 
     # Calibration
     if args.calib:
-        args, model = setup(args)
+        args, model, model_orig = setup(args)
         calib(args, config, model)
     
     # Quantization-Aware Training

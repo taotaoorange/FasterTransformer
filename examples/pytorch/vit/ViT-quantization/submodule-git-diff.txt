@@ -1,0 +1,73 @@
+[1mdiff --git a/models/modeling.py b/models/modeling.py[m
+[1mindex 081d048..e550fe5 100755[m
+[1m--- a/models/modeling.py[m
+[1m+++ b/models/modeling.py[m
+[36m@@ -93,7 +93,7 @@[m [mclass Attention(nn.Module):[m
+         context_layer = context_layer.view(*new_context_layer_shape)[m
+         attention_output = self.out(context_layer)[m
+         attention_output = self.proj_dropout(attention_output)[m
+[31m-        return attention_output, weights[m
+[32m+[m[32m        return attention_output[m
+ [m
+ [m
+ class Mlp(nn.Module):[m
+[36m@@ -180,14 +180,14 @@[m [mclass Block(nn.Module):[m
+     def forward(self, x):[m
+         h = x[m
+         x = self.attention_norm(x)[m
+[31m-        x, weights = self.attn(x)[m
+[32m+[m[32m        x = self.attn(x)[m
+         x = x + h[m
+ [m
+         h = x[m
+         x = self.ffn_norm(x)[m
+         x = self.ffn(x)[m
+         x = x + h[m
+[31m-        return x, weights[m
+[32m+[m[32m        return x[m[41m [m
+ [m
+     def load_from(self, weights, n_block):[m
+         ROOT = f"Transformer/encoderblock_{n_block}"[m
+[36m@@ -240,11 +240,9 @@[m [mclass Encoder(nn.Module):[m
+     def forward(self, hidden_states):[m
+         attn_weights = [][m
+         for layer_block in self.layer:[m
+[31m-            hidden_states, weights = layer_block(hidden_states)[m
+[31m-            if self.vis:[m
+[31m-                attn_weights.append(weights)[m
+[32m+[m[32m            hidden_states = layer_block(hidden_states)[m
+         encoded = self.encoder_norm(hidden_states)[m
+[31m-        return encoded, attn_weights[m
+[32m+[m[32m        return encoded[m
+ [m
+ [m
+ class Transformer(nn.Module):[m
+[36m@@ -255,8 +253,8 @@[m [mclass Transformer(nn.Module):[m
+ [m
+     def forward(self, input_ids):[m
+         embedding_output = self.embeddings(input_ids)[m
+[31m-        encoded, attn_weights = self.encoder(embedding_output)[m
+[31m-        return encoded, attn_weights[m
+[32m+[m[32m        encoded = self.encoder(embedding_output)[m
+[32m+[m[32m        return encoded[m[41m [m
+ [m
+ [m
+ class VisionTransformer(nn.Module):[m
+[36m@@ -270,7 +268,7 @@[m [mclass VisionTransformer(nn.Module):[m
+         self.head = Linear(config.hidden_size, num_classes)[m
+ [m
+     def forward(self, x, labels=None):[m
+[31m-        x, attn_weights = self.transformer(x)[m
+[32m+[m[32m        x = self.transformer(x)[m
+         logits = self.head(x[:, 0])[m
+ [m
+         if labels is not None:[m
+[36m@@ -278,7 +276,7 @@[m [mclass VisionTransformer(nn.Module):[m
+             loss = loss_fct(logits.view(-1, self.num_classes), labels.view(-1))[m
+             return loss[m
+         else:[m
+[31m-            return logits, attn_weights[m
+[32m+[m[32m            return logits[m
+ [m
+     def load_from(self, weights):[m
+         with torch.no_grad():[m
