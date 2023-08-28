@@ -59,7 +59,7 @@ def setup(args):
 def parse_option():
     parser = argparse.ArgumentParser('ViT evaluation script', add_help=False)
 
-    parser.add_argument("--model_type", choices=["ViT-B_16", "ViT-B_32", "ViT-L_16",
+    parser.add_argument("--model_type", choices=["ViT-B_16", "ViT-B_16_timm", "ViT-B_32", "ViT-L_16",
                                              "ViT-L_32", "ViT-H_14"],
                         default="ViT-B_16",
                         help="Which variant to use.")
@@ -139,6 +139,10 @@ def validate(args, data_config, config, model):
     in_chans = 3
     model.half()
     
+    # This is necessary
+    random_input = torch.randn((max_batch, in_chans, args.img_size, args.img_size)).cuda().half()
+    model.forward(random_input)
+
     vit_weights = ViTINT8WeightLoader(layer_num, args.img_size, patch_size, model.state_dict())
     vit_weights.to_int8(args.th_path)
     vit_weights.to_cuda()
